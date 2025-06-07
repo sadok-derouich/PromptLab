@@ -70,20 +70,27 @@
       font-size: 0.9em;
       color: #666;
     }
+    .readonly-label {
+      font-size: 0.85em;
+      color: #555;
+      margin-top: -10px;
+      margin-bottom: 15px;
+    }
   </style>
 </head>
 <body>
-
-  <div class="column">
+  <div class="column" id="left-column">
     <h2>Prompts</h2>
 
     <label for="system-select">System Prompt</label>
     <select id="system-select"></select>
-    <textarea id="system-prompt" placeholder="System prompt will load here..."></textarea>
+    <div class="readonly-label" id="system-comment"></div>
+    <textarea id="system-prompt" readonly></textarea>
 
     <label for="user-select">User Prompt</label>
     <select id="user-select"></select>
-    <textarea id="user-prompt" placeholder="User prompt will load here..."></textarea>
+    <div class="readonly-label" id="user-comment"></div>
+    <textarea id="user-prompt" readonly></textarea>
 
     <div class="api-row">
       <div>
@@ -121,11 +128,14 @@
     </select>
 
     <button onclick="saveOutput()">💾 Save Output</button>
+    <button onclick="resetRunner()">❌ Discard</button>
   </div>
 
   <script>
     let lastResponse = "";
     let lastDuration = 0;
+    let selectedSystemId = null;
+    let selectedUserId = null;
 
     const modelOptions = {
       openai: ["gpt-3.5-turbo", "gpt-4", "gpt-4o"],
@@ -146,49 +156,77 @@
     document.getElementById("api-provider").dispatchEvent(new Event("change"));
 
     async function fetchPromptList(type) {
-      const res = await fetch(`/list-prompts/${type}`);
-      return res.json();
-    }
+  const res = await fetch(`/list-prompts/${type}`);
+  const prompts = await res.json();
+  console.log(`${type} prompts:`, prompts);  // 👈 Add this line
+  return prompts;
+}
 
-    async function loadPrompt(type, name) {
-      const res = await fetch(`/load-prompt/${type}/${name}`);
+    async function loadPromptById(type, id) {
+      const res = await fetch(`/load-prompt/${type}/${id}`);
       return res.json();
     }
 
     async function populateDropdown(type) {
-      const select = document.getElementById(`${type}-select`);
-      const textarea = document.getElementById(`${type}-prompt`);
-      const prompts = await fetchPromptList(type);
-      select.innerHTML = "";
-      prompts.forEach(name => {
-        const option = document.createElement("option");
-        option.value = name;
-        option.textContent = name;
-        select.appendChild(option);
-      });
-      if (prompts.length) {
-        select.value = prompts[0];
-        const data = await loadPrompt(type, prompts[0]);
-        textarea.value = data.content || "";
-      }
-      select.addEventListener("change", async () => {
-        const data = await loadPrompt(type, select.value);
-        textarea.value = data.content || "";
-      });
-    }
+  const selectElement = document.getElementById(`${type}-select`);
+  const textarea = document.getElementById(`${type}-prompt`);
+  const commentBox = document.getElementById(`${type}-comment`);
+  
+  // Store the current selection
+  const currentSelection = selectElement.value;
 
+  const prompts = await fetchPromptList(type);
+
+  // Clear and rebuild the dropdown
+  selectElement.innerHTML = '';
+  
+  // Add placeholder option
+  const placeholder = document.createElement("option");
+  placeholder.textContent = "(Select a prompt)";
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  selectElement.appendChild(placeholder);
+
+  // Add prompt options
+  prompts.forEach(p => {
+    const option = document.createElement("option");
+    option.value = p.id;
+    option.textContent = `${p.id}-${p.name} (${p.version})`;
+    selectElement.appendChild(option);
+  });
+
+  // Restore previous selection if it exists in the new options
+  if (currentSelection && prompts.some(p => p.id == currentSelection)) {
+    selectElement.value = currentSelection;
+  }
+
+  // Event handler
+  selectElement.addEventListener("change", async () => {
+    const id = selectElement.value;
+    if (!id || id === placeholder.value) return;
+    
+    try {
+      const data = await loadPromptById(type, id);
+      if (data.error) throw new Error(data.error);
+      textarea.value = data.content || "";
+      commentBox.textContent = data.comment || "";
+      if (type === "system") selectedSystemId = data.id;
+      else selectedUserId = data.id;
+    } catch (e) {
+      console.error("Failed to load prompt:", e);
+      textarea.value = "";
+      commentBox.textContent = "❌ Failed to load prompt.";
+      if (type === "system") selectedSystemId = null;
+      else selectedUserId = null;
+    }
+  });
+}
     async function sendToAPI() {
       const systemPrompt = document.getElementById("system-prompt").value;
       const userPrompt = document.getElementById("user-prompt").value;
       const provider = document.getElementById("api-provider").value;
       const model = document.getElementById("api-model").value;
       const temperature = parseFloat(document.getElementById("temperature").value);
-
-      const systemName = document.getElementById("system-select").value;
-      const userName = document.getElementById("user-select").value;
-      const systemVersion = await fetch(`/load-prompt/system/${systemName}`)
-        .then(res => res.json()).then(d => d.version || "1.0.0");
-
       const output = document.getElementById("json-output");
       const timer = document.getElementById("timer");
 
@@ -205,13 +243,7 @@
         const res = await fetch("/process", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            system_prompt: systemPrompt,
-            user_prompt: userPrompt,
-            provider,
-            model,
-            temperature
-          })
+          body: JSON.stringify({ system_prompt: systemPrompt, user_prompt: userPrompt, provider, model, temperature })
         });
         clearInterval(interval);
         const json = await res.json();
@@ -219,6 +251,7 @@
         lastDuration = json.duration;
         output.textContent = lastResponse;
         timer.textContent = `Total time: ${lastDuration}s`;
+        document.getElementById("left-column").querySelectorAll("select, input, textarea, button").forEach(el => el.disabled = true);
       } catch (e) {
         clearInterval(interval);
         output.textContent = "❌ Error: " + e.message;
@@ -233,10 +266,6 @@
         return;
       }
 
-      const systemName = document.getElementById("system-select").value;
-      const userName = document.getElementById("user-select").value;
-      const systemVersion = await fetch(`/load-prompt/system/${systemName}`)
-        .then(res => res.json()).then(d => d.version || "1.0.0");
       const model = document.getElementById("api-model").value;
       const provider = document.getElementById("api-provider").value;
       const temperature = parseFloat(document.getElementById("temperature").value);
@@ -245,9 +274,8 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          system_name: systemName,
-          system_version: systemVersion,
-          user_name: userName,
+          system_id: selectedSystemId,
+          user_id: selectedUserId,
           api: provider,
           model,
           temperature,
@@ -258,7 +286,16 @@
       });
 
       alert("Output saved!");
+      resetRunner();
+    }
+
+    function resetRunner() {
       document.getElementById("ranking").value = "";
+      lastResponse = "";
+      lastDuration = 0;
+      document.getElementById("json-output").textContent = "No output yet";
+      document.getElementById("timer").textContent = "Waiting time: 0.00s";
+      document.getElementById("left-column").querySelectorAll("select, input, textarea, button").forEach(el => el.disabled = false);
     }
 
     populateDropdown("system");

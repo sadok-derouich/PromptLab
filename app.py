@@ -4,11 +4,12 @@ import os
 import time
 import json
 from datetime import datetime
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 DB_PATH = "prompts.db"
 
-# Load API keys from config.json
 CONFIG_PATH = "config.json"
 if not os.path.exists(CONFIG_PATH):
     raise FileNotFoundError("Missing config.json with your API keys.")
@@ -61,9 +62,8 @@ def init_db():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS outputs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            system_name TEXT,
-            system_version TEXT,
-            user_name TEXT,
+            system_id INTEGER,
+            user_id INTEGER,
             api TEXT,
             model TEXT,
             temperature REAL,
@@ -105,7 +105,7 @@ def list_prompts(prompt_type):
     conn.close()
     return jsonify(rows)
 
-@app.route("/load-prompt/<prompt_type>/<int:prompt_id>")
+@app.route("/load-prompt/<prompt_type>/<prompt_id>")
 def load_prompt(prompt_type, prompt_id):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -234,12 +234,11 @@ def save_output():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO outputs (system_name, system_version, user_name, api, model, temperature, response_time, response, ranking)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO outputs (system_id, user_id, api, model, temperature, response_time, response, ranking)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        data.get("system_name"),
-        data.get("system_version"),
-        data.get("user_name"),
+        data.get("system_id"),
+        data.get("user_id"),
         data.get("api"),
         data.get("model"),
         data.get("temperature"),
@@ -265,8 +264,13 @@ def get_outputs():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT id, system_name, system_version, user_name, api, model, temperature, response_time, ranking, response, created_at
-        FROM outputs ORDER BY created_at DESC
+        SELECT o.id, o.api, o.model, o.temperature, o.response_time, o.ranking, o.response, o.created_at,
+               sp.id as system_id, sp.name as system_name, sp.version as system_version,
+               up.id as user_id, up.name as user_name, up.version as user_version
+        FROM outputs o
+        LEFT JOIN system_prompts sp ON o.system_id = sp.id
+        LEFT JOIN user_prompts up ON o.user_id = up.id
+        ORDER BY o.created_at DESC
     """)
     rows = [dict(row) for row in cur.fetchall()]
     conn.close()
