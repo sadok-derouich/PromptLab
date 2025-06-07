@@ -45,11 +45,19 @@
       border: none;
       cursor: pointer;
     }
+    tr.comment-row td {
+      background: #f1f1f1;
+      font-style: italic;
+      color: #555;
+    }
   </style>
 </head>
 <body>
   <h2>Saved Outputs</h2>
-
+  <a href="/export-outputs.csv" style="display:inline-block;margin-bottom:10px;padding:8px 12px;background:#007bff;color:white;text-decoration:none;border-radius:4px;">
+    ⬇️ Download CSV
+  </a>
+  
   <table>
     <thead>
       <tr>
@@ -75,12 +83,12 @@
       const tbody = document.getElementById("outputs-body");
       tbody.innerHTML = "";
 
-      data.forEach((row, index) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
+      data.forEach((row) => {
+        const tr1 = document.createElement("tr");
+        tr1.innerHTML = `
           <td class="nowrap">${new Date(row.created_at).toLocaleString()}</td>
-          <td>${row.system_name || ""} ${row.system_version || ""}</td>
-          <td>${row.user_name || ""}</td>
+          <td>ID: ${row.system_id || ""}<br>${row.system_name || ""} (${row.system_version || ""})</td>
+          <td>ID: ${row.user_id || ""}<br>${row.user_name || ""} (${row.user_version || ""})</td>
           <td>${row.api}</td>
           <td>${row.model}</td>
           <td>${row.temperature}</td>
@@ -89,7 +97,14 @@
           <td><details><summary>View</summary>${escapeHTML(row.response)}</details></td>
           <td><button class="small" onclick="deleteOutput(${row.id})">🗑</button></td>
         `;
-        tbody.appendChild(tr);
+        tbody.appendChild(tr1);
+
+        const tr2 = document.createElement("tr");
+        tr2.classList.add("comment-row");
+        tr2.innerHTML = `
+          <td colspan="10"><strong>Comment:</strong> ${escapeHTML(row.comment || "—")}</td>
+        `;
+        tbody.appendChild(tr2);
       });
     }
 

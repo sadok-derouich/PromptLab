@@ -32,5 +32,6 @@ CREATE TABLE IF NOT EXISTS outputs (
     response_time REAL,
     response TEXT,
     ranking INTEGER,
+    comment TEXT, -- ✅ New column for optional comments
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

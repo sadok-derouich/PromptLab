@@ -127,6 +127,9 @@
       <option value="3">3 - Best</option>
     </select>
 
+    <label for="comment">Comment (optional)</label>
+    <textarea id="comment" placeholder="Optional comment..."></textarea>
+
     <button onclick="saveOutput()">💾 Save Output</button>
     <button onclick="resetRunner()">❌ Discard</button>
   </div>
@@ -139,7 +142,7 @@
 
     const modelOptions = {
       openai: ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4-vision-preview", "gpt-4-turbo-preview", "gpt-4-mini"],
-      deepseek: ["deepseek-chat","deepseek-reasoner"]
+      deepseek: ["deepseek-chat", "deepseek-reasoner"]
     };
 
     document.getElementById("api-provider").addEventListener("change", () => {
@@ -156,71 +159,62 @@
     document.getElementById("api-provider").dispatchEvent(new Event("change"));
 
     async function fetchPromptList(type) {
-  const res = await fetch(`/list-prompts/${type}`);
-  const prompts = await res.json();
-  console.log(`${type} prompts:`, prompts);  // 👈 Add this line
-  return prompts;
-}
+      const res = await fetch(`/list-prompts/${type}`);
+      return await res.json();
+    }
 
     async function loadPromptById(type, id) {
       const res = await fetch(`/load-prompt/${type}/${id}`);
-      return res.json();
+      return await res.json();
     }
 
     async function populateDropdown(type) {
-  const selectElement = document.getElementById(`${type}-select`);
-  const textarea = document.getElementById(`${type}-prompt`);
-  const commentBox = document.getElementById(`${type}-comment`);
-  
-  // Store the current selection
-  const currentSelection = selectElement.value;
+      const selectElement = document.getElementById(`${type}-select`);
+      const textarea = document.getElementById(`${type}-prompt`);
+      const commentBox = document.getElementById(`${type}-comment`);
+      const currentSelection = selectElement.value;
 
-  const prompts = await fetchPromptList(type);
+      const prompts = await fetchPromptList(type);
+      selectElement.innerHTML = '';
 
-  // Clear and rebuild the dropdown
-  selectElement.innerHTML = '';
-  
-  // Add placeholder option
-  const placeholder = document.createElement("option");
-  placeholder.textContent = "(Select a prompt)";
-  placeholder.disabled = true;
-  placeholder.selected = true;
-  selectElement.appendChild(placeholder);
+      const placeholder = document.createElement("option");
+      placeholder.textContent = "(Select a prompt)";
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      selectElement.appendChild(placeholder);
 
-  // Add prompt options
-  prompts.forEach(p => {
-    const option = document.createElement("option");
-    option.value = p.id;
-    option.textContent = `${p.id}-${p.name} (${p.version})`;
-    selectElement.appendChild(option);
-  });
+      prompts.forEach(p => {
+        const option = document.createElement("option");
+        option.value = p.id;
+        option.textContent = `${p.id}-${p.name} (${p.version})`;
+        selectElement.appendChild(option);
+      });
 
-  // Restore previous selection if it exists in the new options
-  if (currentSelection && prompts.some(p => p.id == currentSelection)) {
-    selectElement.value = currentSelection;
-  }
+      if (currentSelection && prompts.some(p => p.id == currentSelection)) {
+        selectElement.value = currentSelection;
+      }
 
-  // Event handler
-  selectElement.addEventListener("change", async () => {
-    const id = selectElement.value;
-    if (!id || id === placeholder.value) return;
-    
-    try {
-      const data = await loadPromptById(type, id);
-      if (data.error) throw new Error(data.error);
-      textarea.value = data.content || "";
-      commentBox.textContent = data.comment || "";
-      if (type === "system") selectedSystemId = data.id;
-      else selectedUserId = data.id;
-    } catch (e) {
-      console.error("Failed to load prompt:", e);
-      textarea.value = "";
-      commentBox.textContent = "❌ Failed to load prompt.";
-      if (type === "system") selectedSystemId = null;
-      else selectedUserId = null;
+      selectElement.addEventListener("change", async () => {
+        const id = selectElement.value;
+        if (!id || id === placeholder.value) return;
+
+        try {
+          const data = await loadPromptById(type, id);
+          if (data.error) throw new Error(data.error);
+          textarea.value = data.content || "";
+          commentBox.textContent = data.comment || "";
+          if (type === "system") selectedSystemId = data.id;
+          else selectedUserId = data.id;
+        } catch (e) {
+          console.error("Failed to load prompt:", e);
+          textarea.value = "";
+          commentBox.textContent = "❌ Failed to load prompt.";
+          if (type === "system") selectedSystemId = null;
+          else selectedUserId = null;
+        }
+      });
     }
-  });
-}
+
     async function sendToAPI() {
       const systemPrompt = document.getElementById("system-prompt").value;
       const userPrompt = document.getElementById("user-prompt").value;
@@ -261,6 +255,8 @@
 
     async function saveOutput() {
       const ranking = parseInt(document.getElementById("ranking").value, 10);
+      const comment = document.getElementById("comment").value;
+
       if (!lastResponse || isNaN(ranking)) {
         alert("Please run a prompt and select a ranking before saving.");
         return;
@@ -281,7 +277,8 @@
           temperature,
           response_time: lastDuration,
           response: lastResponse,
-          ranking
+          ranking,
+          comment
         })
       });
 
@@ -291,6 +288,7 @@
 
     function resetRunner() {
       document.getElementById("ranking").value = "";
+      document.getElementById("comment").value = "";
       lastResponse = "";
       lastDuration = 0;
       document.getElementById("json-output").textContent = "No output yet";

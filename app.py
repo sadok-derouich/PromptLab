@@ -6,6 +6,11 @@ import os
 import time
 import json
 from flask_cors import CORS
+import csv
+from io import StringIO
+from flask import Response
+
+
 
 app = Flask(__name__)
 CORS(app)
@@ -206,8 +211,8 @@ def save_output():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO outputs (system_id, user_id, api, model, temperature, response_time, response, ranking)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO outputs (system_id, user_id, api, model, temperature, response_time, response, ranking, comment)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (
         data.get("system_id"),
         data.get("user_id"),
@@ -216,7 +221,8 @@ def save_output():
         data.get("temperature"),
         data.get("response_time"),
         data.get("response"),
-        data.get("ranking")
+        data.get("ranking"),
+        data.get("comment")
     ))
     conn.commit()
     conn.close()
@@ -236,7 +242,7 @@ def get_outputs():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT o.id, o.api, o.model, o.temperature, o.response_time, o.ranking, o.response, o.created_at,
+        SELECT o.id, o.api, o.model, o.temperature, o.response_time, o.ranking, o.response, o.comment, o.created_at,
                sp.id as system_id, sp.name as system_name, sp.version as system_version,
                up.id as user_id, up.name as user_name, up.version as user_version
         FROM outputs o
@@ -247,6 +253,47 @@ def get_outputs():
     rows = cur.fetchall()
     conn.close()
     return jsonify(rows)
+@app.route("/export-outputs.csv")
+def export_outputs_csv():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT 
+            o.created_at, 
+            sp.id AS system_id, sp.name AS system_name, sp.version AS system_version,
+            up.id AS user_id, up.name AS user_name, up.version AS user_version,
+            o.api, o.model, o.temperature, o.response_time, o.ranking, o.response, o.comment
+        FROM outputs o
+        LEFT JOIN system_prompts sp ON o.system_id = sp.id
+        LEFT JOIN user_prompts up ON o.user_id = up.id
+        ORDER BY o.created_at DESC
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Date",
+        "System prompt id", "System prompt name", "System prompt version",
+        "User prompt id", "User prompt name", "User prompt version",
+        "API", "Model", "Temperature", "Time", "Rank", "Response", "Output Comment"
+    ])
+    for row in rows:
+        writer.writerow([
+            row["created_at"],
+            row["system_id"], row["system_name"], row["system_version"],
+            row["user_id"], row["user_name"], row["user_version"],
+            row["api"], row["model"], row["temperature"], row["response_time"], row["ranking"],
+            row["response"], row["comment"]
+        ])
+    
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment;filename=outputs.csv"}
+    )
 
 if __name__ == "__main__":
     app.run(debug=True, port=5001)
