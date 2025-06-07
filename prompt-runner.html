@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Prompt Runner</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background-color: #f8f9fa;
+      display: flex;
+      height: 100vh;
+    }
+    .column {
+      width: 50%;
+      padding: 20px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #ddd;
+    }
+    .column:last-child {
+      border-right: none;
+    }
+    h2 {
+      margin-top: 0;
+      font-size: 1.3em;
+    }
+    select, input, textarea, button {
+      width: 100%;
+      margin-top: 10px;
+      margin-bottom: 15px;
+      padding: 10px;
+      font-size: 14px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      box-sizing: border-box;
+    }
+    button {
+      background-color: #4285f4;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      border: none;
+    }
+    button:hover {
+      background-color: #3367d6;
+    }
+    textarea {
+      resize: vertical;
+      height: 120px;
+    }
+    pre {
+      background-color: white;
+      padding: 15px;
+      border: 1px solid #ccc;
+      overflow: auto;
+      flex: 1;
+    }
+    .api-row {
+      display: flex;
+      gap: 10px;
+    }
+    .api-row > div {
+      flex: 1;
+    }
+    #timer {
+      margin-top: 10px;
+      font-size: 0.9em;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="column">
+    <h2>Prompts</h2>
+
+    <label for="system-select">System Prompt</label>
+    <select id="system-select"></select>
+    <textarea id="system-prompt" placeholder="System prompt will load here..."></textarea>
+
+    <label for="user-select">User Prompt</label>
+    <select id="user-select"></select>
+    <textarea id="user-prompt" placeholder="User prompt will load here..."></textarea>
+
+    <div class="api-row">
+      <div>
+        <label for="api-provider">API</label>
+        <select id="api-provider">
+          <option value="deepseek">DeepSeek</option>
+          <option value="openai">OpenAI</option>
+        </select>
+      </div>
+      <div>
+        <label for="api-model">Model</label>
+        <select id="api-model"></select>
+      </div>
+      <div>
+        <label for="temperature">Temp</label>
+        <input type="number" id="temperature" min="0" max="2" step="0.1" value="0.7" />
+      </div>
+    </div>
+
+    <button onclick="sendToAPI()">Send Prompt</button>
+    <div id="timer">Waiting time: 0.00s</div>
+  </div>
+
+  <div class="column">
+    <h2>JSON Output</h2>
+    <pre id="json-output">No output yet</pre>
+
+    <label for="ranking">Ranking (0–3)</label>
+    <select id="ranking">
+      <option value="">(Select ranking)</option>
+      <option value="0">0 - Worst</option>
+      <option value="1">1 - Poor</option>
+      <option value="2">2 - Good</option>
+      <option value="3">3 - Best</option>
+    </select>
+
+    <button onclick="saveOutput()">💾 Save Output</button>
+  </div>
+
+  <script>
+    let lastResponse = "";
+    let lastDuration = 0;
+
+    const modelOptions = {
+      openai: ["gpt-3.5-turbo", "gpt-4", "gpt-4o"],
+      deepseek: ["deepseek-chat", "deepseek-coder"]
+    };
+
+    document.getElementById("api-provider").addEventListener("change", () => {
+      const provider = document.getElementById("api-provider").value;
+      const modelSelect = document.getElementById("api-model");
+      modelSelect.innerHTML = "";
+      modelOptions[provider].forEach(model => {
+        const option = document.createElement("option");
+        option.value = model;
+        option.textContent = model;
+        modelSelect.appendChild(option);
+      });
+    });
+    document.getElementById("api-provider").dispatchEvent(new Event("change"));
+
+    async function fetchPromptList(type) {
+      const res = await fetch(`/list-prompts/${type}`);
+      return res.json();
+    }
+
+    async function loadPrompt(type, name) {
+      const res = await fetch(`/load-prompt/${type}/${name}`);
+      return res.json();
+    }
+
+    async function populateDropdown(type) {
+      const select = document.getElementById(`${type}-select`);
+      const textarea = document.getElementById(`${type}-prompt`);
+      const prompts = await fetchPromptList(type);
+      select.innerHTML = "";
+      prompts.forEach(name => {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        select.appendChild(option);
+      });
+      if (prompts.length) {
+        select.value = prompts[0];
+        const data = await loadPrompt(type, prompts[0]);
+        textarea.value = data.content || "";
+      }
+      select.addEventListener("change", async () => {
+        const data = await loadPrompt(type, select.value);
+        textarea.value = data.content || "";
+      });
+    }
+
+    async function sendToAPI() {
+      const systemPrompt = document.getElementById("system-prompt").value;
+      const userPrompt = document.getElementById("user-prompt").value;
+      const provider = document.getElementById("api-provider").value;
+      const model = document.getElementById("api-model").value;
+      const temperature = parseFloat(document.getElementById("temperature").value);
+
+      const systemName = document.getElementById("system-select").value;
+      const userName = document.getElementById("user-select").value;
+      const systemVersion = await fetch(`/load-prompt/system/${systemName}`)
+        .then(res => res.json()).then(d => d.version || "1.0.0");
+
+      const output = document.getElementById("json-output");
+      const timer = document.getElementById("timer");
+
+      output.textContent = "⏳ Waiting for response...";
+      timer.textContent = "Waiting time: 0.00s";
+
+      const start = performance.now();
+      const interval = setInterval(() => {
+        const elapsed = ((performance.now() - start) / 1000).toFixed(2);
+        timer.textContent = `Waiting time: ${elapsed}s`;
+      }, 100);
+
+      try {
+        const res = await fetch("/process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system_prompt: systemPrompt,
+            user_prompt: userPrompt,
+            provider,
+            model,
+            temperature
+          })
+        });
+        clearInterval(interval);
+        const json = await res.json();
+        lastResponse = json.response || "";
+        lastDuration = json.duration;
+        output.textContent = lastResponse;
+        timer.textContent = `Total time: ${lastDuration}s`;
+      } catch (e) {
+        clearInterval(interval);
+        output.textContent = "❌ Error: " + e.message;
+        timer.textContent = "Failed.";
+      }
+    }
+
+    async function saveOutput() {
+      const ranking = parseInt(document.getElementById("ranking").value, 10);
+      if (!lastResponse || isNaN(ranking)) {
+        alert("Please run a prompt and select a ranking before saving.");
+        return;
+      }
+
+      const systemName = document.getElementById("system-select").value;
+      const userName = document.getElementById("user-select").value;
+      const systemVersion = await fetch(`/load-prompt/system/${systemName}`)
+        .then(res => res.json()).then(d => d.version || "1.0.0");
+      const model = document.getElementById("api-model").value;
+      const provider = document.getElementById("api-provider").value;
+      const temperature = parseFloat(document.getElementById("temperature").value);
+
+      await fetch("/save-output", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_name: systemName,
+          system_version: systemVersion,
+          user_name: userName,
+          api: provider,
+          model,
+          temperature,
+          response_time: lastDuration,
+          response: lastResponse,
+          ranking
+        })
+      });
+
+      alert("Output saved!");
+      document.getElementById("ranking").value = "";
+    }
+
+    populateDropdown("system");
+    populateDropdown("user");
+  </script>
+</body>
+</html>

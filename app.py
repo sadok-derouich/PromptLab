@@ -1,0 +1,277 @@
+from flask import Flask, request, jsonify, send_from_directory
+import sqlite3
+import os
+import time
+import json
+from datetime import datetime
+
+app = Flask(__name__)
+DB_PATH = "prompts.db"
+
+# Load API keys from config.json
+CONFIG_PATH = "config.json"
+if not os.path.exists(CONFIG_PATH):
+    raise FileNotFoundError("Missing config.json with your API keys.")
+
+with open(CONFIG_PATH) as f:
+    config = json.load(f)
+
+OPENAI_API_KEY = config.get("OPENAI_API_KEY")
+DEEPSEEK_API_KEY = config.get("DEEPSEEK_API_KEY")
+
+if not OPENAI_API_KEY or not DEEPSEEK_API_KEY:
+    raise ValueError("Missing API keys in config.json")
+
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS system_prompts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            version TEXT NOT NULL,
+            content TEXT,
+            creation_date TEXT,
+            last_update TEXT,
+            comment TEXT,
+            UNIQUE(name, version)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_prompts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            version TEXT NOT NULL DEFAULT '1.0.0',
+            content TEXT,
+            creation_date TEXT,
+            comment TEXT,
+            UNIQUE(name, version)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS outputs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            system_name TEXT,
+            system_version TEXT,
+            user_name TEXT,
+            api TEXT,
+            model TEXT,
+            temperature REAL,
+            response_time REAL,
+            response TEXT,
+            ranking INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+@app.route("/")
+def serve_index():
+    return send_from_directory(".", "index.html")
+
+@app.route("/prompt-runner.html")
+def serve_runner():
+    return send_from_directory(".", "prompt-runner.html")
+
+@app.route("/prompt-admin.html")
+def serve_admin():
+    return send_from_directory(".", "prompt-admin.html")
+
+@app.route("/outputs.html")
+def serve_outputs():
+    return send_from_directory(".", "outputs.html")
+
+@app.route("/list-prompts/<prompt_type>")
+def list_prompts(prompt_type):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    if prompt_type == "system":
+        cur.execute("SELECT * FROM system_prompts")
+    else:
+        cur.execute("SELECT * FROM user_prompts")
+    rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
+    return jsonify(rows)
+
+@app.route("/load-prompt/<prompt_type>/<int:prompt_id>")
+def load_prompt(prompt_type, prompt_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    if prompt_type == "system":
+        cur.execute("SELECT * FROM system_prompts WHERE id = ?", (prompt_id,))
+    else:
+        cur.execute("SELECT * FROM user_prompts WHERE id = ?", (prompt_id,))
+    row = cur.fetchone()
+    conn.close()
+    return jsonify(dict(row)) if row else jsonify({"error": "Prompt not found"}), 404
+
+@app.route("/admin/update", methods=["POST"])
+def update_prompt():
+    data = request.get_json()
+    prompt_type = data.get("type")
+    mode = data.get("mode")
+    id = data.get("id")
+    name = data.get("name")
+    version = data.get("version", "1.0.0")
+    content = data.get("content")
+    comment = data.get("comment")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    if prompt_type == "system":
+        if mode == "edit":
+            cur.execute("SELECT id FROM system_prompts WHERE name = ? AND version = ? AND id != ?", (name, version, id))
+            if cur.fetchone():
+                conn.close()
+                return jsonify({"error": "Another system prompt with this name and version already exists."})
+            cur.execute("""
+                UPDATE system_prompts
+                SET name = ?, version = ?, content = ?, last_update = ?, comment = ?
+                WHERE id = ?
+            """, (name, version, content, now, comment, id))
+        else:
+            cur.execute("SELECT id FROM system_prompts WHERE name = ? AND version = ?", (name, version))
+            if cur.fetchone():
+                conn.close()
+                return jsonify({"error": "System prompt with this name and version already exists."})
+            cur.execute("""
+                INSERT INTO system_prompts (name, version, content, creation_date, last_update, comment)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (name, version, content, now, now, comment))
+
+    else:
+        if mode == "edit":
+            cur.execute("SELECT id FROM user_prompts WHERE name = ? AND version = ? AND id != ?", (name, version, id))
+            if cur.fetchone():
+                conn.close()
+                return jsonify({"error": "Another user prompt with this name and version already exists."})
+            cur.execute("""
+                UPDATE user_prompts
+                SET name = ?, version = ?, content = ?, comment = ?
+                WHERE id = ?
+            """, (name, version, content, comment, id))
+        else:
+            cur.execute("SELECT id FROM user_prompts WHERE name = ? AND version = ?", (name, version))
+            if cur.fetchone():
+                conn.close()
+                return jsonify({"error": "User prompt with this name and version already exists."})
+            cur.execute("""
+                INSERT INTO user_prompts (name, version, content, creation_date, comment)
+                VALUES (?, ?, ?, ?, ?)
+            """, (name, version, content, now, comment))
+
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "success"})
+
+@app.route("/admin/delete/<prompt_type>/<int:prompt_id>", methods=["DELETE"])
+def delete_prompt(prompt_type, prompt_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    if prompt_type == "system":
+        cur.execute("DELETE FROM system_prompts WHERE id = ?", (prompt_id,))
+    else:
+        cur.execute("DELETE FROM user_prompts WHERE id = ?", (prompt_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "deleted"})
+
+@app.route("/process", methods=["POST"])
+def process():
+    data = request.get_json()
+    system_prompt = data.get("system_prompt", "")
+    user_prompt = data.get("user_prompt", "")
+    provider = data.get("provider", "deepseek")
+    model = data.get("model", "deepseek-chat")
+    temperature = data.get("temperature", 0.7)
+
+    start = time.time()
+
+    try:
+        if provider == "openai":
+            from openai import OpenAI as OpenAIClient
+            client = OpenAIClient(api_key=OPENAI_API_KEY)
+        elif provider == "deepseek":
+            from openai import OpenAI
+            client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+        else:
+            return jsonify({"error": "Invalid provider"}), 400
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=temperature
+        )
+
+        content = response.choices[0].message.content
+        duration = round(time.time() - start, 2)
+
+        return jsonify({"response": content, "duration": duration})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/save-output", methods=["POST"])
+def save_output():
+    data = request.get_json()
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO outputs (system_name, system_version, user_name, api, model, temperature, response_time, response, ranking)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        data.get("system_name"),
+        data.get("system_version"),
+        data.get("user_name"),
+        data.get("api"),
+        data.get("model"),
+        data.get("temperature"),
+        data.get("response_time"),
+        data.get("response"),
+        data.get("ranking")
+    ))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "saved"})
+
+@app.route("/delete-output/<int:output_id>", methods=["DELETE"])
+def delete_output(output_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM outputs WHERE id = ?", (output_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "deleted"})
+
+@app.route("/outputs", methods=["GET"])
+def get_outputs():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, system_name, system_version, user_name, api, model, temperature, response_time, ranking, response, created_at
+        FROM outputs ORDER BY created_at DESC
+    """)
+    rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
+    return jsonify(rows)
+
+if __name__ == "__main__":
+    init_db()
+    app.run(debug=True, port=5001)

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Outputs</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: #f8f9fa;
+      padding: 20px;
+    }
+    h2 {
+      margin-top: 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: white;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px 10px;
+      text-align: left;
+      font-size: 0.95em;
+    }
+    th {
+      background-color: #e9f0fb;
+    }
+    details {
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow: auto;
+    }
+    .nowrap {
+      white-space: nowrap;
+    }
+    button.small {
+      padding: 5px 10px;
+      font-size: 0.8em;
+      color: white;
+      background-color: #d9534f;
+      border: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h2>Saved Outputs</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>System</th>
+        <th>User</th>
+        <th>API</th>
+        <th>Model</th>
+        <th>Temp</th>
+        <th>Time (s)</th>
+        <th>Rank</th>
+        <th>Response</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="outputs-body"></tbody>
+  </table>
+
+  <script>
+    async function loadOutputs() {
+      const res = await fetch("/outputs");
+      const data = await res.json();
+      const tbody = document.getElementById("outputs-body");
+      tbody.innerHTML = "";
+
+      data.forEach((row, index) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="nowrap">${new Date(row.created_at).toLocaleString()}</td>
+          <td>${row.system_name || ""} ${row.system_version || ""}</td>
+          <td>${row.user_name || ""}</td>
+          <td>${row.api}</td>
+          <td>${row.model}</td>
+          <td>${row.temperature}</td>
+          <td>${row.response_time}s</td>
+          <td>${row.ranking}</td>
+          <td><details><summary>View</summary>${escapeHTML(row.response)}</details></td>
+          <td><button class="small" onclick="deleteOutput(${row.id})">🗑</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function deleteOutput(id) {
+      if (!confirm("Delete this output?")) return;
+      await fetch(`/delete-output/${id}`, { method: "DELETE" });
+      loadOutputs();
+    }
+
+    function escapeHTML(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    loadOutputs();
+  </script>
+</body>
+</html>

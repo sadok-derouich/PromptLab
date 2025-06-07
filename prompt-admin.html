@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Prompt Admin</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: #f8f9fa;
+      padding: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: white;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px 10px;
+      text-align: left;
+    }
+    th {
+      background-color: #e9f0fb;
+    }
+    button.small {
+      padding: 5px 10px;
+      font-size: 0.9em;
+      margin-right: 5px;
+    }
+    textarea, input, select {
+      width: 100%;
+      margin: 5px 0 15px;
+      padding: 8px;
+    }
+    dialog {
+      width: 400px;
+      padding: 20px;
+      border: 1px solid #ccc;
+    }
+    .error {
+      color: red;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Prompt Admin</h2>
+
+  <label for="admin-type">Prompt Type</label>
+  <select id="admin-type" onchange="loadAdminTable()">
+    <option value="system">System</option>
+    <option value="user">User</option>
+  </select>
+
+  <button onclick="openPromptForm()">➕ New Prompt</button>
+
+  <table>
+    <thead>
+      <tr id="table-headers"></tr>
+    </thead>
+    <tbody id="table-body"></tbody>
+  </table>
+
+  <dialog id="prompt-dialog">
+    <form method="dialog" onsubmit="event.preventDefault(); savePrompt();">
+      <h3 id="dialog-title">New Prompt</h3>
+      <div class="error" id="form-error" style="display:none;"></div>
+      <input type="hidden" id="form-type">
+      <input type="hidden" id="form-mode">
+      <input type="hidden" id="form-id">
+      <label>Name <input id="form-name" required></label>
+      <label>Version <input id="form-version" required></label>
+      <label>Content <textarea id="form-content"></textarea></label>
+      <label>Comment <input id="form-comment"></label>
+      <div style="text-align: right;">
+        <button type="submit">💾 Save</button>
+        <button type="button" onclick="document.getElementById('prompt-dialog').close()">❌ Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    async function loadAdminTable() {
+      const type = document.getElementById("admin-type").value;
+      const res = await fetch(`/list-prompts/${type}`);
+      const rows = await res.json(); // [{id, name, version, ...}]
+
+      const headers = ["ID", "Name", "Version", "Creation Date"];
+      if (type === "system") headers.push("Last Update");
+      headers.push("Comment", "Actions");
+
+      document.getElementById("table-headers").innerHTML = headers.map(h => `<th>${h}</th>`).join("");
+
+      const tbody = document.getElementById("table-body");
+      tbody.innerHTML = "";
+
+      for (const row of rows) {
+        const encodedData = encodeURIComponent(JSON.stringify(row));
+        const html = type === "system" ? `
+          <td>${row.id}</td>
+          <td>${row.name}</td>
+          <td>${row.version}</td>
+          <td>${formatDate(row.creation_date)}</td>
+          <td>${formatDate(row.last_update)}</td>
+          <td>${row.comment || ""}</td>
+          <td>
+            <button class="small edit-btn" data-id="${row.id}" data-type="${type}" data-data="${encodedData}">Edit</button>
+            <button class="small newver-btn" data-type="${type}" data-data="${encodedData}">New Version</button>
+            <button class="small delete-btn" data-id="${row.id}" data-type="${type}">Delete</button>
+          </td>
+        ` : `
+          <td>${row.id}</td>
+          <td>${row.name}</td>
+          <td>${row.version}</td>
+          <td>${formatDate(row.creation_date)}</td>
+          <td>${row.comment || ""}</td>
+          <td>
+            <button class="small edit-btn" data-id="${row.id}" data-type="${type}" data-data="${encodedData}">Edit</button>
+            <button class="small newver-btn" data-type="${type}" data-data="${encodedData}">New Version</button>
+            <button class="small delete-btn" data-id="${row.id}" data-type="${type}">Delete</button>
+          </td>
+        `;
+        const tr = document.createElement("tr");
+        tr.innerHTML = html;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function formatDate(str) {
+      if (!str) return "";
+      const d = new Date(str);
+      return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+
+    function openPromptForm(mode = "new", data = {}, type = null) {
+      document.getElementById("form-type").value = type || document.getElementById("admin-type").value;
+      document.getElementById("form-mode").value = mode;
+      document.getElementById("form-id").value = data.id || "";
+      document.getElementById("form-name").value = data.name || "";
+      document.getElementById("form-version").value = mode === "newver" ? "" : (data.version || "1.0.0");
+      document.getElementById("form-content").value = data.content || "";
+      document.getElementById("form-comment").value = data.comment || "";
+      document.getElementById("form-content").readOnly = (mode === "edit");
+
+      document.getElementById("form-error").style.display = "none";
+      document.getElementById("dialog-title").textContent =
+        mode === "edit" ? "Edit Prompt" : (mode === "newver" ? "New Version" : "New Prompt");
+
+      document.getElementById("prompt-dialog").showModal();
+    }
+
+    async function savePrompt() {
+      const id = document.getElementById("form-id").value;
+      const type = document.getElementById("form-type").value;
+      const mode = document.getElementById("form-mode").value;
+      const name = document.getElementById("form-name").value;
+      const version = document.getElementById("form-version").value;
+      const content = document.getElementById("form-content").value;
+      const comment = document.getElementById("form-comment").value;
+      const errorBox = document.getElementById("form-error");
+
+      const payload = { id, type, mode, name, version, content, comment };
+
+      const res = await fetch("/admin/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      let result;
+      try {
+        result = await res.json();
+      } catch {
+        const text = await res.text();
+        alert("Error:\n" + text);
+        return;
+      }
+
+      if (result.error) {
+        errorBox.textContent = result.error;
+        errorBox.style.display = "block";
+        return;
+      }
+
+      document.getElementById("prompt-dialog").close();
+      await loadAdminTable();
+    }
+
+    function deletePrompt(id, type) {
+      if (confirm("Delete this prompt?")) {
+        fetch(`/admin/delete/${type}/${id}`, { method: "DELETE" })
+          .then(() => loadAdminTable());
+      }
+    }
+
+    document.addEventListener("click", (e) => {
+      const btn = e.target;
+      if (btn.matches(".edit-btn")) {
+        const data = JSON.parse(decodeURIComponent(btn.dataset.data));
+        openPromptForm("edit", data, btn.dataset.type);
+      }
+      if (btn.matches(".newver-btn")) {
+        const data = JSON.parse(decodeURIComponent(btn.dataset.data));
+        openPromptForm("newver", data, btn.dataset.type);
+      }
+      if (btn.matches(".delete-btn")) {
+        deletePrompt(btn.dataset.id, btn.dataset.type);
+      }
+    });
+
+    loadAdminTable();
+  </script>
+</body>
+</html>
