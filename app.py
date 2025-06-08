@@ -1,20 +1,18 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
+from flask_cors import CORS
 from datetime import datetime
+from io import StringIO
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
 import time
 import json
-from flask_cors import CORS
 import csv
-from io import StringIO
-from flask import Response
-
-
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # Enable Cross-Origin Resource Sharing
 
+# Load config.json (must exist)
 CONFIG_PATH = "config.json"
 if not os.path.exists(CONFIG_PATH):
     raise FileNotFoundError("Missing config.json with your API keys and DB config.")
@@ -22,27 +20,31 @@ if not os.path.exists(CONFIG_PATH):
 with open(CONFIG_PATH) as f:
     config = json.load(f)
 
+# Extract keys and DB credentials
 OPENAI_API_KEY = config.get("OPENAI_API_KEY")
 DEEPSEEK_API_KEY = config.get("DEEPSEEK_API_KEY")
 DB_HOST = config.get("DB_HOST")
 DB_NAME = config.get("DB_NAME")
 DB_USER = config.get("DB_USER")
 DB_PASS = config.get("DB_PASS")
+DB_PORT = config.get("DB_PORT", 5432)
 
 if not all([OPENAI_API_KEY, DEEPSEEK_API_KEY, DB_HOST, DB_NAME, DB_USER, DB_PASS]):
     raise ValueError("Missing keys or DB config in config.json")
 
+# PostgreSQL DB connection
 def get_db_connection():
     return psycopg2.connect(
-        host=config["DB_HOST"],
-        database=config["DB_NAME"],
-        user=config["DB_USER"],
-        password=config["DB_PASS"],
-        port=config.get("DB_PORT", 5432),
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASS,
+        port=DB_PORT,
         sslmode="require",  # Supabase requires SSL
         cursor_factory=RealDictCursor
     )
 
+# ----------- Static HTML Serving -----------
 
 @app.route("/")
 def serve_index():
@@ -60,31 +62,21 @@ def serve_admin():
 def serve_outputs():
     return send_from_directory(".", "outputs.html")
 
+# ----------- Prompt Management (CRUD) -----------
+
 @app.route("/list-prompts/<prompt_type>")
 def list_prompts(prompt_type):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        if prompt_type == "system":
-            cur.execute("SELECT * FROM system_prompts")
-        else:
-            cur.execute("SELECT * FROM user_prompts")
-
+        table = "system_prompts" if prompt_type == "system" else "user_prompts"
+        cur.execute(f"SELECT * FROM {table}")
         rows = cur.fetchall()
         conn.close()
         return jsonify(rows)
-
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        try:
-            conn.rollback()  # try to recover the connection
-            conn.close()
-        except:
-            pass
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/load-prompt/<prompt_type>/<prompt_id>")
 def load_prompt(prompt_type, prompt_id):
@@ -94,7 +86,7 @@ def load_prompt(prompt_type, prompt_id):
     cur.execute(f"SELECT * FROM {table} WHERE id = %s", (prompt_id,))
     row = cur.fetchone()
     conn.close()
-    return jsonify(row) if row else jsonify({"error": "Prompt not found"}), 404
+    return jsonify(row) if row else (jsonify({"error": "Prompt not found"}), 404)
 
 @app.route("/admin/update", methods=["POST"])
 def update_prompt():
@@ -111,47 +103,32 @@ def update_prompt():
     conn = get_db_connection()
     cur = conn.cursor()
 
-    if prompt_type == "system":
-        if mode == "edit":
-            cur.execute("SELECT id FROM system_prompts WHERE name = %s AND version = %s AND id != %s", (name, version, id))
-            if cur.fetchone():
-                conn.close()
-                return jsonify({"error": "Another system prompt with this name and version already exists."})
-            cur.execute("""
-                UPDATE system_prompts
-                SET name = %s, version = %s, content = %s, last_update = %s, comment = %s
-                WHERE id = %s
-            """, (name, version, content, now, comment, id))
-        else:
-            cur.execute("SELECT id FROM system_prompts WHERE name = %s AND version = %s", (name, version))
-            if cur.fetchone():
-                conn.close()
-                return jsonify({"error": "System prompt with this name and version already exists."})
-            cur.execute("""
-                INSERT INTO system_prompts (name, version, content, creation_date, last_update, comment)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (name, version, content, now, now, comment))
+    table = "system_prompts" if prompt_type == "system" else "user_prompts"
 
+    if mode == "edit":
+        # Ensure uniqueness of name+version except current
+        cur.execute(f"SELECT id FROM {table} WHERE name = %s AND version = %s AND id != %s", (name, version, id))
+        if cur.fetchone():
+            conn.close()
+            return jsonify({"error": f"Another {prompt_type} prompt with this name and version already exists."})
+        cur.execute(f"""
+            UPDATE {table}
+            SET name = %s, version = %s, content = %s,
+                last_update = %s, comment = %s
+            WHERE id = %s
+        """, (name, version, content, now if prompt_type == "system" else None, comment, id))
     else:
-        if mode == "edit":
-            cur.execute("SELECT id FROM user_prompts WHERE name = %s AND version = %s AND id != %s", (name, version, id))
-            if cur.fetchone():
-                conn.close()
-                return jsonify({"error": "Another user prompt with this name and version already exists."})
-            cur.execute("""
-                UPDATE user_prompts
-                SET name = %s, version = %s, content = %s, comment = %s
-                WHERE id = %s
-            """, (name, version, content, comment, id))
-        else:
-            cur.execute("SELECT id FROM user_prompts WHERE name = %s AND version = %s", (name, version))
-            if cur.fetchone():
-                conn.close()
-                return jsonify({"error": "User prompt with this name and version already exists."})
-            cur.execute("""
-                INSERT INTO user_prompts (name, version, content, creation_date, comment)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (name, version, content, now, comment))
+        # New prompt (or new version)
+        cur.execute(f"SELECT id FROM {table} WHERE name = %s AND version = %s", (name, version))
+        if cur.fetchone():
+            conn.close()
+            return jsonify({"error": f"{prompt_type.capitalize()} prompt with this name and version already exists."})
+        fields = "(name, version, content, creation_date, comment" + (", last_update" if prompt_type == "system" else "") + ")"
+        values = "%s, %s, %s, %s, %s" + (", %s" if prompt_type == "system" else "")
+        params = [name, version, content, now, comment]
+        if prompt_type == "system":
+            params.append(now)
+        cur.execute(f"INSERT INTO {table} {fields} VALUES ({values})", params)
 
     conn.commit()
     conn.close()
@@ -167,6 +144,8 @@ def delete_prompt(prompt_type, prompt_id):
     conn.close()
     return jsonify({"status": "deleted"})
 
+# ----------- Prompt Execution -----------
+
 @app.route("/process", methods=["POST"])
 def process():
     data = request.get_json()
@@ -179,6 +158,7 @@ def process():
     start = time.time()
 
     try:
+        # Dynamic API client setup
         if provider == "openai":
             from openai import OpenAI as OpenAIClient
             client = OpenAIClient(api_key=OPENAI_API_KEY)
@@ -188,6 +168,7 @@ def process():
         else:
             return jsonify({"error": "Invalid provider"}), 400
 
+        # Run chat completion
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -201,9 +182,10 @@ def process():
         duration = round(time.time() - start, 2)
 
         return jsonify({"response": content, "duration": duration})
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# ----------- Output Logging -----------
 
 @app.route("/save-output", methods=["POST"])
 def save_output():
@@ -211,7 +193,8 @@ def save_output():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO outputs (system_id, user_id, api, model, temperature, response_time, response, ranking, comment)
+        INSERT INTO outputs (system_id, user_id, api, model, temperature,
+                             response_time, response, ranking, comment)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (
         data.get("system_id"),
@@ -253,6 +236,7 @@ def get_outputs():
     rows = cur.fetchall()
     conn.close()
     return jsonify(rows)
+
 @app.route("/export-outputs.csv")
 def export_outputs_csv():
     conn = get_db_connection()
@@ -294,6 +278,8 @@ def export_outputs_csv():
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment;filename=outputs.csv"}
     )
+
+# ----------- App Entry -----------
 
 if __name__ == "__main__":
     app.run(debug=True, port=5001)

@@ -1,0 +1,9 @@
+{
+  "OPENAI_API_KEY": "your-openai-api-key",
+  "DEEPSEEK_API_KEY": "your-deepseek-api-key",
+  "DB_HOST": "localhost",
+  "DB_PORT": Port,
+  "DB_NAME": "your_database",
+  "DB_USER": "your_user",
+  "DB_PASS": "your_password"
+}

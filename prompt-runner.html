@@ -12,6 +12,7 @@
       display: flex;
       height: 100vh;
     }
+
     .column {
       width: 50%;
       padding: 20px;
@@ -20,13 +21,16 @@
       flex-direction: column;
       border-right: 1px solid #ddd;
     }
+
     .column:last-child {
       border-right: none;
     }
+
     h2 {
       margin-top: 0;
       font-size: 1.3em;
     }
+
     select, input, textarea, button {
       width: 100%;
       margin-top: 10px;
@@ -37,6 +41,7 @@
       border-radius: 5px;
       box-sizing: border-box;
     }
+
     button {
       background-color: #4285f4;
       color: white;
@@ -44,13 +49,16 @@
       cursor: pointer;
       border: none;
     }
+
     button:hover {
       background-color: #3367d6;
     }
+
     textarea {
       resize: vertical;
       height: 120px;
     }
+
     pre {
       background-color: white;
       padding: 15px;
@@ -58,18 +66,22 @@
       overflow: auto;
       flex: 1;
     }
+
     .api-row {
       display: flex;
       gap: 10px;
     }
+
     .api-row > div {
       flex: 1;
     }
+
     #timer {
       margin-top: 10px;
       font-size: 0.9em;
       color: #666;
     }
+
     .readonly-label {
       font-size: 0.85em;
       color: #555;
@@ -79,6 +91,7 @@
   </style>
 </head>
 <body>
+  <!-- Left: Prompt Selection and Execution -->
   <div class="column" id="left-column">
     <h2>Prompts</h2>
 
@@ -92,6 +105,7 @@
     <div class="readonly-label" id="user-comment"></div>
     <textarea id="user-prompt" readonly></textarea>
 
+    <!-- API provider, model, temperature -->
     <div class="api-row">
       <div>
         <label for="api-provider">API</label>
@@ -114,6 +128,7 @@
     <div id="timer">Waiting time: 0.00s</div>
   </div>
 
+  <!-- Right: Response and Evaluation -->
   <div class="column">
     <h2>JSON Output</h2>
     <pre id="json-output">No output yet</pre>
@@ -140,11 +155,16 @@
     let selectedSystemId = null;
     let selectedUserId = null;
 
+    // Supported models per provider
     const modelOptions = {
-      openai: ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4-vision-preview", "gpt-4-turbo-preview", "gpt-4-mini"],
+      openai: [
+        "gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4o-mini",
+        "gpt-4-turbo", "gpt-4-vision-preview", "gpt-4-turbo-preview", "gpt-4-mini"
+      ],
       deepseek: ["deepseek-chat", "deepseek-reasoner"]
     };
 
+    // Update model list when provider changes
     document.getElementById("api-provider").addEventListener("change", () => {
       const provider = document.getElementById("api-provider").value;
       const modelSelect = document.getElementById("api-model");
@@ -158,6 +178,7 @@
     });
     document.getElementById("api-provider").dispatchEvent(new Event("change"));
 
+    // Fetch prompts and populate dropdowns
     async function fetchPromptList(type) {
       const res = await fetch(`/list-prompts/${type}`);
       return await res.json();
@@ -168,53 +189,55 @@
       return await res.json();
     }
 
+    // Populate system/user dropdowns
     async function populateDropdown(type) {
-      const selectElement = document.getElementById(`${type}-select`);
+      const select = document.getElementById(`${type}-select`);
       const textarea = document.getElementById(`${type}-prompt`);
-      const commentBox = document.getElementById(`${type}-comment`);
-      const currentSelection = selectElement.value;
+      const comment = document.getElementById(`${type}-comment`);
+      const selectedId = select.value;
 
       const prompts = await fetchPromptList(type);
-      selectElement.innerHTML = '';
+      select.innerHTML = "";
 
       const placeholder = document.createElement("option");
       placeholder.textContent = "(Select a prompt)";
       placeholder.disabled = true;
       placeholder.selected = true;
-      selectElement.appendChild(placeholder);
+      select.appendChild(placeholder);
 
       prompts.forEach(p => {
         const option = document.createElement("option");
         option.value = p.id;
         option.textContent = `${p.id}-${p.name} (${p.version})`;
-        selectElement.appendChild(option);
+        select.appendChild(option);
       });
 
-      if (currentSelection && prompts.some(p => p.id == currentSelection)) {
-        selectElement.value = currentSelection;
+      if (selectedId && prompts.some(p => p.id == selectedId)) {
+        select.value = selectedId;
       }
 
-      selectElement.addEventListener("change", async () => {
-        const id = selectElement.value;
+      // On change: load selected prompt
+      select.addEventListener("change", async () => {
+        const id = select.value;
         if (!id || id === placeholder.value) return;
 
         try {
           const data = await loadPromptById(type, id);
           if (data.error) throw new Error(data.error);
           textarea.value = data.content || "";
-          commentBox.textContent = data.comment || "";
+          comment.textContent = data.comment || "";
           if (type === "system") selectedSystemId = data.id;
           else selectedUserId = data.id;
         } catch (e) {
-          console.error("Failed to load prompt:", e);
           textarea.value = "";
-          commentBox.textContent = "❌ Failed to load prompt.";
+          comment.textContent = "❌ Failed to load prompt.";
           if (type === "system") selectedSystemId = null;
           else selectedUserId = null;
         }
       });
     }
 
+    // Send prompt to selected API
     async function sendToAPI() {
       const systemPrompt = document.getElementById("system-prompt").value;
       const userPrompt = document.getElementById("user-prompt").value;
@@ -245,6 +268,8 @@
         lastDuration = json.duration;
         output.textContent = lastResponse;
         timer.textContent = `Total time: ${lastDuration}s`;
+
+        // Lock inputs
         document.getElementById("left-column").querySelectorAll("select, input, textarea, button").forEach(el => el.disabled = true);
       } catch (e) {
         clearInterval(interval);
@@ -253,6 +278,7 @@
       }
     }
 
+    // Save response to DB
     async function saveOutput() {
       const ranking = parseInt(document.getElementById("ranking").value, 10);
       const comment = document.getElementById("comment").value;
@@ -286,6 +312,7 @@
       resetRunner();
     }
 
+    // Reset UI for new test
     function resetRunner() {
       document.getElementById("ranking").value = "";
       document.getElementById("comment").value = "";
@@ -296,6 +323,7 @@
       document.getElementById("left-column").querySelectorAll("select, input, textarea, button").forEach(el => el.disabled = false);
     }
 
+    // Init dropdowns
     populateDropdown("system");
     populateDropdown("user");
   </script>

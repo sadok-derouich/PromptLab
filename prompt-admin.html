@@ -11,35 +11,42 @@
       background: #f8f9fa;
       padding: 20px;
     }
+
     table {
       width: 100%;
       border-collapse: collapse;
       margin-top: 20px;
       background: white;
     }
+
     th, td {
       border: 1px solid #ccc;
       padding: 8px 10px;
       text-align: left;
     }
+
     th {
       background-color: #e9f0fb;
     }
+
     button.small {
       padding: 5px 10px;
       font-size: 0.9em;
       margin-right: 5px;
     }
+
     textarea, input, select {
       width: 100%;
       margin: 5px 0 15px;
       padding: 8px;
     }
+
     dialog {
       width: 400px;
       padding: 20px;
       border: 1px solid #ccc;
     }
+
     .error {
       color: red;
       margin-bottom: 10px;
@@ -49,6 +56,7 @@
 <body>
   <h2>Prompt Admin</h2>
 
+  <!-- Prompt Type Switcher -->
   <label for="admin-type">Prompt Type</label>
   <select id="admin-type" onchange="loadAdminTable()">
     <option value="system">System</option>
@@ -57,24 +65,30 @@
 
   <button onclick="openPromptForm()">➕ New Prompt</button>
 
+  <!-- Prompt Table -->
   <table>
-    <thead>
-      <tr id="table-headers"></tr>
-    </thead>
+    <thead><tr id="table-headers"></tr></thead>
     <tbody id="table-body"></tbody>
   </table>
 
+  <!-- Prompt Form Dialog -->
   <dialog id="prompt-dialog">
     <form method="dialog" onsubmit="event.preventDefault(); savePrompt();">
       <h3 id="dialog-title">New Prompt</h3>
       <div class="error" id="form-error" style="display:none;"></div>
+
+      <!-- Hidden Fields -->
       <input type="hidden" id="form-type">
       <input type="hidden" id="form-mode">
       <input type="hidden" id="form-id">
+
+      <!-- Editable Fields -->
       <label>Name <input id="form-name" required></label>
       <label>Version <input id="form-version" required></label>
       <label>Content <textarea id="form-content"></textarea></label>
       <label>Comment <input id="form-comment"></label>
+
+      <!-- Action Buttons -->
       <div style="text-align: right;">
         <button type="submit">💾 Save</button>
         <button type="button" onclick="document.getElementById('prompt-dialog').close()">❌ Cancel</button>
@@ -83,17 +97,17 @@
   </dialog>
 
   <script>
+    // Load prompts and build table rows
     async function loadAdminTable() {
       const type = document.getElementById("admin-type").value;
       const res = await fetch(`/list-prompts/${type}`);
-      const rows = await res.json(); // [{id, name, version, ...}]
+      const rows = await res.json();
 
       const headers = ["ID", "Name", "Version", "Creation Date"];
       if (type === "system") headers.push("Last Update");
       headers.push("Comment", "Actions");
 
       document.getElementById("table-headers").innerHTML = headers.map(h => `<th>${h}</th>`).join("");
-
       const tbody = document.getElementById("table-body");
       tbody.innerHTML = "";
 
@@ -129,12 +143,14 @@
       }
     }
 
+    // Convert timestamp to readable format
     function formatDate(str) {
       if (!str) return "";
       const d = new Date(str);
       return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     }
 
+    // Open dialog for new/edit/new-version
     function openPromptForm(mode = "new", data = {}, type = null) {
       document.getElementById("form-type").value = type || document.getElementById("admin-type").value;
       document.getElementById("form-mode").value = mode;
@@ -152,17 +168,17 @@
       document.getElementById("prompt-dialog").showModal();
     }
 
+    // Save prompt to server
     async function savePrompt() {
-      const id = document.getElementById("form-id").value;
-      const type = document.getElementById("form-type").value;
-      const mode = document.getElementById("form-mode").value;
-      const name = document.getElementById("form-name").value;
-      const version = document.getElementById("form-version").value;
-      const content = document.getElementById("form-content").value;
-      const comment = document.getElementById("form-comment").value;
-      const errorBox = document.getElementById("form-error");
-
-      const payload = { id, type, mode, name, version, content, comment };
+      const payload = {
+        id: document.getElementById("form-id").value,
+        type: document.getElementById("form-type").value,
+        mode: document.getElementById("form-mode").value,
+        name: document.getElementById("form-name").value,
+        version: document.getElementById("form-version").value,
+        content: document.getElementById("form-content").value,
+        comment: document.getElementById("form-comment").value
+      };
 
       const res = await fetch("/admin/update", {
         method: "POST",
@@ -180,6 +196,7 @@
       }
 
       if (result.error) {
+        const errorBox = document.getElementById("form-error");
         errorBox.textContent = result.error;
         errorBox.style.display = "block";
         return;
@@ -189,6 +206,7 @@
       await loadAdminTable();
     }
 
+    // Delete prompt
     function deletePrompt(id, type) {
       if (confirm("Delete this prompt?")) {
         fetch(`/admin/delete/${type}/${id}`, { method: "DELETE" })
@@ -196,6 +214,7 @@
       }
     }
 
+    // Handle clicks on action buttons
     document.addEventListener("click", (e) => {
       const btn = e.target;
       if (btn.matches(".edit-btn")) {
@@ -211,6 +230,7 @@
       }
     });
 
+    // Initial load
     loadAdminTable();
   </script>
 </body>
